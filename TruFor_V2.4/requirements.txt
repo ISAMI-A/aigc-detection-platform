@@ -1,0 +1,13 @@
+# TruFor 检测依赖（已移除弃用的 DIRE / 旧检测器依赖：transformers、diffusers、accelerate、piexif、rich 等）
+# 注意: torch 和 torchvision 使用本地 wheel 安装（CUDA 11.8）
+# torch==2.3.0+cu118
+# torchvision==0.18.0+cu118
+numpy>=1.24.0,<2.0.0             # torch 2.3.0 基于 numpy 1.x 编译
+opencv-python>=4.8.0,<5.0.0      # 5.x 需要 numpy>=2，与 torch 2.3.0 不兼容
+Pillow>=10.0.0
+openpyxl>=3.1.0                  # XLSX 报告输出
+timm>=1.0.0                      # TruFor SegFormer 编码器
+yacs>=0.1.8                      # TruFor 配置解析
+huggingface-hub>=0.23.0          # timm 依赖
+safetensors>=0.4.0               # timm 依赖
+tqdm>=4.60.0                     # TruFor 推理进度

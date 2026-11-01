@@ -1,0 +1,25 @@
+导入导出功能 基本能跑通 （detect、smart 两系统完整），但 rs_verify 遥感系统存在严重缺陷 。以下按严重程度列出：
+
+## 严重（数据丢失/恢复后功能损坏）
+1. rs_images 恢复丢失 scenario 场景字段 （ auth.py:810-814 ）
+
+- INSERT 只有 7 列，没有 scenario ，恢复后全部落列默认值 "detect"
+- 后果 ： verify （遥感变化核验）场景的图恢复后变 detect ，verify 场景上传列表按场景过滤查不到 → 图片“消失”；classify（position=single）能靠下次重启的 _migrate 存量修正救回，verify 无法救
+2. rs_records 的 before_path/after_path 恢复后是悬空的 zip 相对路径
+
+- 导出时 _pack_table 把这两个列改写成 files/rs_work/{id}-... （zip 内路径），恢复时 只提取了 annotated_image ，before/after 原样入库
+- 后果 ：① 重新核验 os.path.exists(rec.before_path) 恒 False → 404“原图文件已丢失”；② B104 级联删除按路径匹配记录与上传图 → 恢复的记录与恢复的图片 关联断裂 ，删图不清记录、孤儿判断全失效；③ 顺带缺陷：before/after 与 rs_images.file_path 是同一文件，导出时打包了两份（rs_uploads + rs_work 各一份）， zip 体积无谓翻倍
+3. 恢复的标注图落盘位置破坏 rec_ 目录约定 → 误删全设备标注图
+
+- 恢复时标注图平铺到 rs_work/<device_id>/ ，正常流程在 rs_work/rec_xxx/ （一记录一目录）
+- 后果 ：删除任意一条恢复记录时， _delete_record_files （B103）回退逻辑按文件名 walk 会命中 rs_work/<device_id> → rmtree 把该设备 所有恢复记录的标注图一起删光 ，其余记录标注图全部 404
+## 中等
+4. rs_records.excel_path 不在导出文件列 ：恢复后指向旧机器绝对路径（不存在），Excel 下载功能对恢复数据失效
+
+5. rs_presets（系统设置的 LLM 预设/API 配置）完全不导出 ：换设备后设置需手工重配——是否算备份范围属产品决策，但用户感知上“导入导出”没覆盖设置页数据
+
+6. 重复导入无去重 ：同一 zip 导两次 → 记录与文件全部翻倍，无任何提示
+
+## 轻微
+7. 300MB 导入上限 ：图片多时导出的 zip 超限直接拒绝导入（导出侧无限制也无预警）
+8. 恢复不校验备份归属（任何人的 zip 都能导入自己账号），meta.json 的 username 仅存档不展示

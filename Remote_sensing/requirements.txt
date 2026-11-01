@@ -1,0 +1,17 @@
+# 遥感变化核验 CLI 依赖
+# 安装：pip install -r requirements.txt
+# 说明：CLI（rs_verify.py / run.py）必需 openai pillow openpyxl pyyaml rich typer；
+#       web_bridge.py 仅供 web 后端集成使用（随本包分发，不依赖 web 项目）
+
+# LLM API 调用
+openai>=1.0.0
+# 图像处理
+Pillow>=10.0.0
+# Excel 报告
+openpyxl>=3.1.0
+# 配置解析
+PyYAML>=6.0
+# 终端输出
+rich>=13.0.0
+# CLI 框架
+typer>=0.12.0

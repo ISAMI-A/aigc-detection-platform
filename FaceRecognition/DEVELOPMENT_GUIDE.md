@@ -1,0 +1,23 @@
+# FaceRecognition · 模块开发辅助文档
+
+> 本模块为**独立 CLI 算法模块**（未集成 web），踩坑记录记在本文件。
+> 集成 web 后，按 `web/DEVELOPMENT_GUIDE.md` 的「新增一个系统（操作模板）」执行，届时本文档记录并入 web 文档体系。
+>
+> Bug 编号沿用全局 B 系列（与 `web/DEVELOPMENT_GUIDE.md` 共用编号空间，将来集成时可直接衔接、不冲突）。
+
+## 一、历史 Bug 记录
+
+| 编号 | 问题 | 根因 | 修复 |
+|------|------|------|------|
+| B129 | `FaceRecognition/core/face_engine.py` 报 `ImportError: attempted relative import beyond top-level package` | core 作为**顶层包**被导入（`run.py` 把 FaceRecognition 目录 `sys.path.insert` 后 `from core.xxx import`），其内部却用 `from .. import config`（成熟两层相对导入，预期 config 是 core 的父包）——但此时 core 的父包是 sys.path 根，相对导入找不到父包 | core 内引用模块顶层 `config.py` 一律改**顶层绝对导入** `import config`（config 已在 sys.path），`from .face_engine import ...` 同级相对导入保留；`face_db.default_db()` 里 `from .. import config` 同理改顶层。教训：**「被当作顶层包直接导入的包」内部不得用 `from ..` 引用其父包模块** |
+| B130 | `run.py list` 报 `TypeError: cmd_list() takes 2 positional arguments but 3 were given` | `run.py` 统一分发 `fn(engine, db, args)` 给所有子命令，但 `cmd_list`/`cmd_delete` 只管数据库、没写 `engine` 形参，签名比分发少一个位置参数 | 参数名对齐分发协议：`cmd_list(_engine, db, args)`、`cmd_delete(_engine, db, args)`（不用的引擎用 `_engine` 命名列明）。教训：**子命令分发若统一 `fn(engine, db, args)`，全部子命令签名必须一致，含不用引擎的也必须占位** |
+| B131 | 同图两次 embed 特征不一致（相似度 0.089，应≈1.0）：1:1 verify 恒判"不同人"，1:N 识别时中时不中，**结果按调用次数奇偶交替**（第 1/3/5 次一致、第 2/4/6 次另一个值）；CPU 上同样复现，GPU/CPU 首次特征却一致（0.9999）→ 排除数值精度问题 | facexlib `matlab_cp2tform.findSimilarity` 移植 bug：`xyR = xy` 是**浅引用**，`xyR[:, 0] = -1 * xyR[:, 0]` 原地翻转了 reference_pts 的 x 列（MATLAB 赋值是值拷贝，Python `=` 是引用）；而 `warp_and_crop_face` 内 `ref_pts = np.float32(reference_pts)` 对**已是 float32 的数组不拷贝、直接返回原对象** → 全局常量 `_ARC_FACE_DST`（恰好 float32）每次调用被翻转一次，对齐模板奇偶污染 | `_align_face` 改传 `_ARC_FACE_DST.copy()`（每次副本，翻转发生在副本上，全局常量永不被污染）。修复后同图 1.0、镜像 0.9058、identify 正确命中。教训：①传给第三方库的可变全局常量（尤其 numpy 数组）**一律传 `.copy()` 副本**②排查"结果不稳定"类 bug 时用**固定输入连续调用三次对比**可快速识别奇偶交替模式（纯模型推理是确定的，问题必在预处理有状态）③该坑属 facexlib 库内 bug（`retinaface.align_multi` 同样受累，但本项目只走 `detect_faces` 不受影响），勿直接改 site-packages |
+| B132 | 人脸检测**过度检测**：低质量/复杂背景图（模糊+暗背景+花束前景）只有 1 张糊脸，却检出 9 个框、置信度 0.52~0.89，且模糊假脸喂给 ArcFace 后相似度普遍超阈值 → 全被误匹配到"识别出一堆人脸"；仅把 `DETECT_THRESHOLD` 0.1→0.5 **无效果**（0.92/0.89 的假阳压不掉）| ① RetinaFace **mobile0.25** 精度有限，复杂背景过度报警，且误检框置信度很高；② mobile 检测器对清晰大脸还会输出多个**同目标不同尺度/水平偏移的变体框**（两两 IoU≈0.27~0.39），无合并步骤，导致单人图报多人；③ 上述"几何过滤仅在特征层面筛选 AOI"不可靠，需要**框层面的置信+尺寸+关键点结构+重叠抑制**联合过滤 | ① 检测模型 `retinaface_mobile0.25` → **`retinaface_resnet50`**（同一 facexlib、零新依赖，仅需下载 `detection_Resnet50_Final.pth` ≈109MB 至 `weights_root`，D 盘、不占 C；用户此前"换模型失败"是换 onnxruntime 运行时，与本处 facexlib 内换 backbone 不同）② `face_engine` 新增 `_pass_filter`+`_kps_is_face` 后处理：最小人脸尺寸 `MIN_FACE_SIZE=20` + 5 点关键点几何校验（两眼水平、鼻尖居中偏下、双嘴角更下、嘴眼距比、眼距/框高比 `KPS_ASPECT=(0.2,1.8)`）③ 新增贪心 NMS `_nms` 合并同目标重叠变体框，`NMS_IOU=0.30`。**验证**：用户误检模糊图 9→1；无脸风景 0；清晰正脸 1；双人并排正确 2 且未误合并。**教训**：①调阈值治不了过度检测（假阳置信度高），要换更准检测器 + 框级多重过滤兜底 ②检测模型对清晰大脸会输出多个 IoU~0.3 的偏移变体，必须补 NMS 合并 ③关键点几何校验下限不可设太高（真实 retinaface 框眼距/框高可低至 ~0.28，0.4 会误杀真脸；0.2 安全） |
+
+## 二、更新日志
+
+| 日期 | 更新内容 |
+|------|----------|
+| 2026-08 | **修复人脸检测过度检测/误识别（B132）**——低质量模糊+暗背景+花束前景图只有 1 张糊脸却被检出 9 个且全部误匹配（仅调阈值 0.1→0.5 无效）。三层修复：①检测模型 `mobile0.25` → `retinaface_resnet50`（同 facexlib、零依赖，`weights_root` 新增 `detection_Resnet50_Final.pth`≈109MB，D 盘）②`face_engine` 新增 `_pass_filter`+`_kps_is_face` 后处理（最小人脸尺寸 `MIN_FACE_SIZE=20`、5 点关键点几何校验 `KPS_ASPECT=(0.2,1.8)`）③新增贪心 NMS `_nms` 合并同目标偏移变体框（`NMS_IOU=0.30`）。验证：误检模糊图 9→1、无脸风景 0、清晰正脸 1、双人并排正确 2 未误合并。新参数集中在 `config.py`（`DETECT_MODEL`/`MIN_FACE_SIZE`/`MIN_KPS_CHECK`/`KPS_ASPECT`/`NMS_IOU`）便于回退；修改前状态回档点保留在 `_bk_rollback/` 与旧权重 `detection_mobilenet0.25_Final.pth`（待确认后再清理）。**待办**：web 端人脸服务若复用独立检测逻辑，需按本方案同步（本次仅改模块层，web 未动） |
+| 2026-08 | **修复人脸特征提取奇偶交替不稳定（B131，web 集成前体检发现）**——同图两次 embed 相似度仅 0.089（应≈1.0）、1:1 verify 恒判"不同人"、1:N 识别时中时不中；根因是 facexlib `findSimilarity` 浅引用原地翻转 reference 模板 + `np.float32()` 对同 dtype 数组不拷贝 → 全局 `_ARC_FACE_DST` 每次调用被翻转一次、对齐结果奇偶交替（详见上表 B131）。修复为 `_align_face` 传 `_ARC_FACE_DST.copy()`。修复后同图 1.0 / 镜像 0.9058 / identify 正确命中，端到端全链路（register/verify/identify/list/delete，走 `web_bridge.FaceRecognizer`）通过；GPU 推理单次 verify 约 0.3s、identify 约 0.15s，向量库无历史脏数据，**模块具备 web 集成条件**。同日起 bug 记录从 `web/DEVELOPMENT_GUIDE.md` 迁入本文件（模块未集成，独立记录） |
+| 2026-08 | **新增 FaceRecognition 人脸识别算法模块（独立 CLI，未接 web）** —— `FaceRecognition/` 新增：`config.py`（模型/阈值/权重目录/向量库路径/空闲卸载参数）、`core/face_engine.py`（RetinaFace 检测 + ArcFace 512 维特征，GPU 懒加载、`cosine_similarity`）、`core/model_manager.py`（懒加载单例 + 空闲自动卸载 + 全局推理锁）、`core/face_db.py`（SQLite 向量库：register/delete/list_all/search 1:N/verify 1:1，向量存 BLOB）、`run.py`（register/verify/identify/list/delete/demo 子命令）、`web_bridge.py`（`FaceRecognizer` 桥接骨架：register/verify/identify，供 web 后续进程调用，正式集成改子进程+JSON 中转模式）。依赖复用现有 torch GPU 栈（未新增 onnxruntime/insightface，省空间）。已用合成人脸跑通注册→列库→识别（1.0 命中）→1:1 验证（0.53 判同一人）→删除全链路；详见 B129/B130 |

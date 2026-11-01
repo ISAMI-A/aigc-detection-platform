@@ -1,0 +1,27 @@
+# ==================== LLM API 配置（示例文件） ====================
+# 使用方法：复制本文件为 config.yaml，填入你自己的服务地址与密钥。
+# config.yaml 已被 .gitignore 忽略，不会提交到仓库。
+llm:
+  # API 类型：openai（调用远程 OpenAI 兼容接口）或 local（本地加载模型，预留）
+  api: openai
+
+  # OpenAI 兼容 API 配置
+  openai:
+    # API 服务地址：用 OpenAI 官方不用改；用 DeepSeek / 阿里云百炼 / 本地 Ollama 等改对应地址
+    base_url: https://api.example.com/compatible-mode/v1
+    # API 密钥（必填）
+    api_key: sk-your-api-key
+    # 视觉语言模型名称，需支持图片输入，如 qwen-vl-max、gpt-4o
+    model_name: your-vision-model
+    # 思考模式
+    think: false
+    # 单次回复最大 token 数，2000 足够 JSON 输出
+    max_tokens: 2000
+    # 随机性 0-2；核验场景建议 0，减少判定波动
+    temperature: 0
+
+  # 本地模型配置（预留，后续接入 Qwen2-VL 等）
+  local:
+    model_path: ./models/Qwen2-VL-7B
+    device: cuda
+    max_new_tokens: 2048

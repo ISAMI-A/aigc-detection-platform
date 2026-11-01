@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 模型权重与中间产物（体积大，需自行准备）
+*.pt
+*.pth
+*.pth.tar
+*.tar
+*.onnx
+*.pkl
+*.npz
+*.ckpt
+*weights/*
+
+# 运行时数据：SQLite 数据库、上传图片、检测结果、聊天文件、人脸库
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 敏感配置（请复制 .env.example 为 .env 后填写；远程 LLM 密钥在 config.yaml）
+web/.env
+Remote_sensing/config.yaml
+
+# 前端
+node_modules/
+web/frontend/dist/
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
